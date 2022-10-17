@@ -1,7 +1,10 @@
-from flask import Flask, request
-import PyPDF2
+import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import PyPDF2
+import requests
+from flask import Flask, request
 
 app = Flask(__name__)
 
@@ -20,9 +23,11 @@ def processFile():
             casesOnPage = re.findall(r'[\w]+\n?\s+\n?v\.\n?\s+\n?[\w\n]+', pageObject.extractText())
             cases.extend(casesOnPage)
         
-        processedCases = processExtractedCases(cases)
+        processedCaseNames = processExtractedCases(cases)
+        fullCases = getCases(processedCaseNames)
         fileObject.close()
-        return (processedCases, 200)
+
+        return (fullCases, 200)
     except Exception as e:
         print(e)
         return ('failure', 400)
@@ -33,12 +38,23 @@ def processExtractedCases(cases):
         cases[i] = ' '.join(cases[i].split())
     return list(set(cases))
 
-# # [\w]+\n?\s+\n?v\.\n?\s+\n?[\w\n]+
+def getCases(caseNames):
+    results = []
+    baseUrl = f"{os.getenv('CASE_LAW_URL')}/cases"
+    
+    def getFullCaseInformation(caseName):
+        result = requests.get(
+            url=f'{baseUrl}/?name_abbreviation={caseName}&full_case=true',
+            headers={f"Authorization": f"Token {os.getenv('CASE_LAW_API_KEY')}"}
+        )
+        return result.json()
+    
+    threads = []
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        for caseName in caseNames:
+            threads.append(executor.submit(getFullCaseInformation, caseName))
 
-# from flask import Flask
+        for task in as_completed(threads):
+            results.append(task.result())
 
-# app = Flask(__name__)
-
-# @app.route("/")
-# def hello_world():
-#     return "<p>Hello, World!</p>"
+    return results
